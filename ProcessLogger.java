@@ -5,36 +5,34 @@ import java.util.logging.*;
 
 public class ProcessLogger {
 	
-	static Logger logger;
+	static Logger peerDataLogger;
+
+	private static final Level InfoLevel = Level.INFO;
 	
-	public static Logger getLogger(Integer peerId) {
-		logger = Logger.getLogger(ProcessLogger.class.getName());
-		logger.setLevel(Level.INFO);
+	public static Logger fetchPeerDataLogger(Integer peerId) {
+		peerDataLogger = Logger.getLogger(ProcessLogger.class.getName());
+		peerDataLogger.setLevel(InfoLevel);
 		
-		FileHandler fhand = null;
+		FileHandler handler = null;
 		try {
-			fhand = new FileHandler("log_peer_" + peerId + ".log");
-		} catch (SecurityException e) {
-			e.printStackTrace();
-		} catch (IOException e) {
-			e.printStackTrace();
+			String logFile = "log_peer_" + peerId + ".log";
+			handler = new FileHandler(logFile);
+		}catch (Exception exception) {
+			System.err.println("Exception Occurred while Handling the Log File: "+exception.getMessage());
+			exception.printStackTrace();
 		}
 		
-		fhand.setFormatter(new SimpleFormatter() {
-            private static final String format = "[%1$tF %1$tT] [%2$-7s] %3$s %n";
+		handler.setFormatter(new SimpleFormatter() {
+			private static final String format = "[%1$tF %1$tT] [%2$-7s] %3$s %n";
 
             @Override
-            public synchronized String format(LogRecord lr) {
-                return String.format(format,
-                        new Date(lr.getMillis()),
-                        lr.getLevel().getLocalizedName(),
-                        lr.getMessage()
-                );
+            public synchronized String format(LogRecord record) {
+                return String.format(format, new Date(record.getMillis()), record.getLevel().getLocalizedName(), record.getMessage());
             }
         });
 		
-		logger.addHandler(fhand);
-		return logger;
+		peerDataLogger.addHandler(handler);
+		return peerDataLogger;
 	}
 
 }

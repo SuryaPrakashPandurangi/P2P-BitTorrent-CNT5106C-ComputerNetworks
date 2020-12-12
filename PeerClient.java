@@ -10,302 +10,306 @@ public class PeerClient extends Thread {
 
 	Socket requestSocket;
 	BufferedOutputStream bufferedOutputStream;
-	BufferedInputStream bufferedIn;
+	BufferedInputStream bufferedInputStream;
 
 	boolean isPeerClient;
 	String peerID;
-	byte[] peerBitFieldArray;
-	
-	
-	boolean isClientInterested = true;
-	boolean isClientChoked = true;
-	AtomicBoolean killClientProcess = new AtomicBoolean(false);
-	Float dataDownloadRate = 1.0f;
+	byte[] bitFieldClient;
 
-	PeerTorrConfig peerDataConfig;
-	MessageReader messageDataReader;
-	MessageConstructionUtil messageUtil;
-	
 
-	public PeerClient(Socket clientSocket, boolean isPeerClient, String peerID, PeerTorrConfig peerConfig) {
-	
-		this.peerDataConfig = peerConfig;
+	boolean isRemotePeerClientInterested = true;
+	boolean isRemotePeerClientChoked = true;
+	AtomicBoolean peerProcessKillCommand = new AtomicBoolean(false);
+	Float downloadSpeed = 1.0f;
+
+
+	PeerDataConfig peerDataConfig;
+	PeerMessageReader messageReader;
+	MessageConstructorUtil messageUtil;
+
+
+	public PeerClient(Socket clientSocket, boolean isRemotePeerClient, String peerID, PeerDataConfig peerDataCfg) {
+
+		this.peerDataConfig = peerDataCfg;
 		this.requestSocket = clientSocket;
-		this.isPeerClient = isPeerClient;
+		this.isPeerClient = isRemotePeerClient;
 
-		messageDataReader = new MessageReader();
-		messageUtil = new MessageConstructionUtil();
-		
-		try{
+		messageUtil = new MessageConstructorUtil();
+		messageReader = new PeerMessageReader();
+
+		try {
 			bufferedOutputStream = new BufferedOutputStream(requestSocket.getOutputStream());
 			bufferedOutputStream.flush();
+			bufferedInputStream = new BufferedInputStream(requestSocket.getInputStream());
 
-			bufferedIn = new BufferedInputStream(requestSocket.getInputStream());
-
-			if(isPeerClient){
-				initializeP2PClient(peerID);
-			}else{
-				initializeP2PServer();
+			if (isRemotePeerClient) {
+				initializeRemoteP2PClient(peerID);
+			} else {
+				initializeServer();
 			}
-			
-			startP2PCommunication();
+
+			startDataCommunication();
+
 		} catch (IOException ex) {
 			ex.printStackTrace();
-			peerProcess.peerProcessLogger.info("Exception Occured while Creating Peer Client: " + ex.getMessage());
+			peerProcess.peerDataLogger.info("Exception Occured while initializing Client: " + ex.getMessage());
 		}
 	}
 
 	public void run() {
-		Instant thisInstant = Instant.now();
-		long startEpoch = thisInstant.getEpochSecond();
+		Instant instant = Instant.now();
+		long startEpoch = instant.getEpochSecond();
 
 		try {
-			long processingTime = 0l;
-			long totalTime = 0l;
-			
-			byte[] clientMessageLength, clientMessageType;
-			clientMessageType = new byte[1];
-			clientMessageLength = new byte[4];
-			
+			long timeForprocessing = 0l;
+			long overallTimeTaken = 0l;
+
+			byte[] byteMessageLength, byteMessageType;
 			int requestedIndex = 0;
-			int numberOfPiecesReceived = 0;
+			int noOfPiecesReceived = 0;
 
-			while (!killClientProcess.get()) {
+			byteMessageType = new byte[1];
+			byteMessageLength = new byte[4];
 
-				bufferedIn.read(clientMessageLength);
-				bufferedIn.read(clientMessageType);
+			while (!peerProcessKillCommand.get()) {
 
-				int clientMessageOrdValue = new BigInteger(clientMessageType).intValue();
-				PeerCommunicationMessageType messageType = PeerCommunicationMessageType.values()[clientMessageOrdValue];
+				bufferedInputStream.read(byteMessageLength);
+				bufferedInputStream.read(byteMessageType);
+				int byteMessageInt = new BigInteger(byteMessageType).intValue();
+				PeerCommunicationMessageType peerMessageType = PeerCommunicationMessageType.values()[byteMessageInt];
 
-				if("CHOKE".equals(messageType)){
-					peerProcess.peerProcessLogger.info("Peer: " + peerProcess.peerProcessID + " is choked by Peer: " + peerID);
-					handleChokeMessage(requestedIndex);
-				}else if("UNCHOKE".equals(messageType)){
-					peerProcess.peerProcessLogger.info("Peer: " + peerProcess.peerProcessID + " is unchoked by Peer:" + peerID);
-					int pieceInx = messageDataReader.fetchIndexOfPiece(peerProcess.bitField, peerBitFieldArray, peerProcess.piecesReqsted);
-					if (pieceInx >= 0) {
-						requestedIndex = pieceInx;
-						peerProcess.piecesReqsted[pieceInx].set(true);
-						sendMessage(messageUtil.constructRequestMessage(pieceInx));
-						processingTime = System.nanoTime();
-					}
-				}else if("INTERESTED".equals(messageType)){
-					fetchAndHandleInterestedMessage();
-				}else if("NOTINTERESTED".equals(messageType)){
-					fetchAndHandleNotInterestedMessage();
-				}else if("HAVE".equals(messageType)){
-					fetchAndHandleHaveMessage();
-				}else if("REQUEST".equals(messageType)){
-					handleRequestMessage();
-				}else if("PIECE".equals(messageType)){
-					byte[] pieceDataAsBytes = new byte[4];
-					bufferedIn.read(pieceDataAsBytes);
+				switch (peerMessageType) {
+					case INTERESTED:
+						fetchAndgandleInterestedMsg();
+						break;
+					case REQUEST:
+						fetchAndHandleRequestMessage();
+						break;
+					case HAVE:
+						fetchAndHandleHaveMessage();
+						break;
+					case NOTINTERESTED:
+						fetchAndHandleNotInterestedMessage();
+						break;
+					case CHOKE:
+						peerProcess.peerDataLogger.info("Peer: " + peerProcess.peerProcessID + " is Choked by Peer: " + peerID);
+						fetchAndProcessChokeMsg(requestedIndex);
+						break;
+					case UNCHOKE:
+						peerProcess.peerDataLogger.info("Peer: " + peerProcess.peerProcessID + " is unchoked by Peer:" + peerID);
+						int pieceIndexUnchoke = messageReader.requestPieceIndex(peerProcess.bitFieldData, bitFieldClient, peerProcess.noOfPiecesRequested);
+						if (pieceIndexUnchoke >= 0) {
+							requestedIndex = pieceIndexUnchoke;
+							peerProcess.noOfPiecesRequested[pieceIndexUnchoke].set(true);
+							transmitMessage(messageUtil.fetchAndConstructRequestMessage(pieceIndexUnchoke));
+							timeForprocessing = System.nanoTime();
+						}
+						break;
 
-					int pieceIndex = ByteArrayUtil.convertByteArrayToInteger(pieceDataAsBytes);
-					int messageLength = ByteArrayUtil.convertByteArrayToInteger(clientMessageLength);
+					case PIECE:
+						byte[] indexPiece = new byte[4];
+						bufferedInputStream.read(indexPiece);
 
-					byte[] messagePayload = messageDataReader.readAndfetchMessagePayload(bufferedIn, messageLength - 5);
+						int integerIndex = ByteIOUtil.byteArrayToInteger(indexPiece);
 
-					peerProcess.bitField[pieceIndex / 8] |= 1 << (7 - (pieceIndex % 8));
+						int msgLenPeer = ByteIOUtil.byteArrayToInteger(byteMessageLength);
 
-					int startingPoint = pieceIndex * PeerTorrConfig.PieceSize;
+						byte[] pieceDataPayload = messageReader.fetchAndReadMessagePayload(bufferedInputStream, msgLenPeer - 5);
 
-					for(int i = 0; i < messagePayload.length; i++) {
-						peerProcess.resourcePayload[startingPoint + i] = messagePayload[i];
-					}
+						peerProcess.bitFieldData[integerIndex / 8] |= 1 << (7 - (integerIndex % 8));
 
-					numberOfPiecesReceived++;
+						int startingIndex = integerIndex * PeerDataConfig.transferPieceSize;
+						for (int i = 0; i < pieceDataPayload.length; i++) {
+							peerProcess.resourceDataPayload[startingIndex + i] = pieceDataPayload[i];
+						}
+						noOfPiecesReceived++;
+						peerProcess.peerDataLogger.info("Peer: " + peerProcess.peerProcessID + " has downloaded the piece " + integerIndex + " from Peer: " + peerID + ". Now the number of pieces it has is : " + noOfPiecesReceived);
 
-					peerProcess.peerProcessLogger.info("The Peer: " + peerProcess.peerProcessID + " downloaded the piece with Index " + pieceIndex + " from Peer: " + peerID + ". Now it has " + numberOfPiecesReceived+" pieces.");
+						overallTimeTaken += System.nanoTime() - timeForprocessing;
+						downloadSpeed = (float) ((noOfPiecesReceived * PeerDataConfig.transferPieceSize) / overallTimeTaken);
 
-					totalTime += System.nanoTime() - processingTime;
-					dataDownloadRate = (float) ((numberOfPiecesReceived * PeerTorrConfig.PieceSize) / totalTime);
+						publishHaveMessageAcrossPeers(indexPiece);
 
-					publishAndBroadcastHaveMsg(pieceDataAsBytes);
-					pieceIndex = messageDataReader.fetchIndexOfPiece(peerProcess.bitField, peerBitFieldArray, peerProcess.piecesReqsted);
+						integerIndex = messageReader.requestPieceIndex(peerProcess.bitFieldData, bitFieldClient, peerProcess.noOfPiecesRequested);
 
-					if(pieceIndex >= 0){
-						requestedIndex = pieceIndex;
-						peerProcess.piecesReqsted[pieceIndex].set(true);
-						sendMessage(messageUtil.constructRequestMessage(pieceIndex));
-						processingTime = System.currentTimeMillis();
+						if (integerIndex >= 0) {
+							requestedIndex = integerIndex;
+							peerProcess.noOfPiecesRequested[integerIndex].set(true);
+							transmitMessage(messageUtil.fetchAndConstructRequestMessage(integerIndex));
+							timeForprocessing = System.currentTimeMillis();
+						} else {
+							transmitNotInterestedMessage();
+						}
 
-					}else{
-						checkAndPublishNotInterestedMessage();
-					}
+						break;
+
+					default:
+						break;
 				}
-
-
 				Instant instantNew = Instant.now();
 				long endEpoch = instantNew.getEpochSecond();
+
 				long diff = endEpoch - startEpoch;
 
 				if(diff > 90){
 					System.exit(0);
 				}
 			}
-		}catch (IOException ex) {
+		}
+
+		catch (IOException ex) {
 			System.err.println("Exception while handling resource: "+ex.getMessage());
-			System.err.println("Read the Stack Trace:");
-			ex.printStackTrace();
+			//ex.printStackTrace();
 		}
+
 	}
 
-	public void setConditionForStopping(boolean stopCondition)  {
-		killClientProcess.set(stopCondition);
 
-		if (killClientProcess.get()) {
-			peerProcess.peerProcessLogger.info("Closing Socket");
-			closePeerSocket();
-		}
-	}
 
-	public void sendMessage(byte[] messagePayload) {
+	public void transmitMessage(byte[] transmitMsg) {
 		try {
-			bufferedOutputStream.write(messagePayload);
+			bufferedOutputStream.write(transmitMsg);
 			bufferedOutputStream.flush();
-
-		} catch (IOException ioException) {
-			System.err.println("Exception occurred while Sending message across Peers: "+ioException.getMessage());
-			ioException.printStackTrace();
+		} catch (Exception exception) {
+			System.err.println("Error while Transmitting Message");
+			exception.printStackTrace();
 		}
+
 	}
 
-	public void handleChokeMessage(int requestedIndex) {
-		byte indexAsAByte = peerProcess.bitField[requestedIndex / 8];
-
-		if (((1 << (7 - (requestedIndex % 8))) & indexAsAByte) == 0) {
-			peerProcess.piecesReqsted[requestedIndex].set(false);
+	public void validateStoppingCondition(boolean stopCommand)  {
+		peerProcessKillCommand.set(stopCommand);
+		if (peerProcessKillCommand.get()) {
+			peerProcess.peerDataLogger.info("Closing Socket");
+			closeSocket();
 		}
-	}
-
-	public void fetchAndHandleInterestedMessage() {
-		peerProcess.peerProcessLogger.info("Peer " + peerProcess.peerProcessID + " received An Interested message from " + peerID + ".");
-		isClientInterested = true;
-
 	}
 
 	public void fetchAndHandleNotInterestedMessage() {
-		peerProcess.peerProcessLogger.info("Peer " + peerProcess.peerProcessID + " received A Not Interested message from Peer: " + peerID+".");
-		isClientInterested = false;
-		isClientChoked = true;
+		peerProcess.peerDataLogger.info("Peer " + peerProcess.peerProcessID + " received a Not Interested message from Peer: " + peerID);
+		isRemotePeerClientInterested = false;
+		isRemotePeerClientChoked = true;
 	}
 
-	public void fetchAndHandleHaveMessage() {
-		byte[] pieceIndexbytes = messageDataReader.readAndfetchMessagePayload(bufferedIn, 4);
-		int pieceIndex = ByteArrayUtil.convertByteArrayToInteger(pieceIndexbytes);
-
-		peerProcess.peerProcessLogger.info("Peer: " + peerProcess.peerProcessID + " received the 'have' message from Peer: " + peerID + " for the piece index:" + pieceIndex);
-		peerBitFieldArray[pieceIndex / 8] |= (1 << (7 - (pieceIndex % 8)));
-
-		byte indexByte = peerProcess.bitField[pieceIndex / 8];
-
-		if (((1 << (7 - (pieceIndex % 8))) & indexByte) == 0) {
-			sendMessage(messageUtil.constructInterestedMessage());
-		} else {
-			sendMessage(messageUtil.constructNotInterestedMessage());
+	public void fetchAndProcessChokeMsg(int requestedIndex) {
+		byte dataAtIndex = peerProcess.bitFieldData[requestedIndex / 8];
+		if (((1 << (7 - (requestedIndex % 8))) & dataAtIndex) == 0) {
+			peerProcess.noOfPiecesRequested[requestedIndex].set(false);
 		}
 	}
 
-	public void handleRequestMessage() {
-		byte[] requestMessagePayload = messageDataReader.readAndfetchMessagePayload(bufferedIn, 4);
+	public void fetchAndgandleInterestedMsg() {
+		peerProcess.peerDataLogger.info("Peer " + peerProcess.peerProcessID + " received an Interested message from " + peerID + ".");
+		isRemotePeerClientInterested = true;
+	}
 
-		int receivedPieceIndex = ByteArrayUtil.convertByteArrayToInteger(requestMessagePayload);
 
-		peerProcess.peerProcessLogger.info("Peer: " + peerProcess.peerProcessID + " received A Request from Peer: " + peerID + " for the Piece with Index: " + receivedPieceIndex);
-		int pieceStartIndex = receivedPieceIndex * PeerTorrConfig.PieceSize;
 
+	public void initializeRemoteP2PClient(String id) {
+		this.peerID = id;
+		PeerHandshakeMessage handshakeMsg = new PeerHandshakeMessage(String.valueOf(peerProcess.peerProcessID));
+		transmitMessage(handshakeMsg.constructHandshakeMessage());
+		messageReader.fetchAndReadTCPHandShakeMessage(bufferedInputStream);
+		peerProcess.peerDataLogger.info("Peer "+ peerProcess.peerProcessID + "initialized a connection to Peer:" + peerID);
+	}
+
+	public void initializeServer() {
+		this.peerID = messageReader.fetchAndReadTCPHandShakeMessage(bufferedInputStream);
+		PeerHandshakeMessage handshakeMsg = new PeerHandshakeMessage(String.valueOf(peerProcess.peerProcessID));
+		transmitMessage(handshakeMsg.constructHandshakeMessage());
+		peerProcess.peerDataLogger.info("Peer: "+ peerProcess.peerProcessID + "initialized a connection to Peer: " + peerID);
+	}
+
+	public void startDataCommunication() {
+		peerProcess.peerDataLogger.info("Peer: "+ peerProcess.peerProcessID + "is Successfully connected to Peer: " + peerID);
+		transmitMessage(messageUtil.fetchAndConstructBitFieldMessage(peerProcess.bitFieldData));
+		bitFieldClient = messageReader.fetchTCPBitFieldPayload(bufferedInputStream);
+
+		if (messageReader.doSendInterestedMessage(peerProcess.bitFieldData, bitFieldClient)) {
+			transmitMessage(messageUtil.fetchAndConstructInterestedMessage());
+		} else {
+			transmitMessage(messageUtil.fetchAndConstructNotInterestedMessage());
+		}
+	}
+
+	public void transmitNotInterestedMessage() throws IOException {
+		transmitMessage(messageUtil.fetchAndConstructNotInterestedMessage());
+		if (Arrays.equals(peerProcess.bitFieldData, peerProcess.fullDataResource)) {
+			for (PeerClient client : peerProcess.peerClients) {
+				client.transmitMessage(client.messageUtil.fetchAndConstructNotInterestedMessage());
+			}
+			writeDataToFile();
+		}
+	}
+
+
+
+	public void closeSocket() {
 		try {
-			byte[] payloadData;
-
-			if((PeerTorrConfig.fileSz - pieceStartIndex) < PeerTorrConfig.PieceSize){
-				payloadData = Arrays.copyOfRange(peerProcess.resourcePayload, pieceStartIndex, PeerTorrConfig.fileSz);
-			}else{
-				payloadData = Arrays.copyOfRange(peerProcess.resourcePayload, pieceStartIndex, pieceStartIndex + PeerTorrConfig.PieceSize);
-			}
-
-			if(!isClientChoked){
-				sendMessage(messageUtil.constructPieceMessage(receivedPieceIndex, payloadData));
-			}
-		}catch (Exception excep) {
-			System.err.println("Exception occurred while handling request message: "+excep.getMessage());
-			excep.printStackTrace();
+			if (!requestSocket.isClosed())
+				requestSocket.close();
+		} catch (Exception e) {
+			System.err.println("Error while Closing Socket.");
+			e.printStackTrace();
 		}
-	}
-
-	public void initializeP2PClient(String clientId) {
-		this.peerID = clientId;
-
-		PeerHandshakeMessage peerHandshakeMessage = new PeerHandshakeMessage(String.valueOf(peerProcess.peerProcessID));
-
-		sendMessage(peerHandshakeMessage.constructHandshakeMessage());
-		messageDataReader.fetchTCPHasMessage(bufferedIn);
-		peerProcess.peerProcessLogger.info("Peer "+ peerProcess.peerProcessID + "initiated a connection with Peer:" + peerID);
-	}
-
-	public void initializeP2PServer() {
-		this.peerID = messageDataReader.fetchTCPHasMessage(bufferedIn);
-
-		PeerHandshakeMessage peerHandShakeMsg = new PeerHandshakeMessage(String.valueOf(peerProcess.peerProcessID));
-		sendMessage(peerHandShakeMsg.constructHandshakeMessage());
-		peerProcess.peerProcessLogger.info("Peer: "+ peerProcess.peerProcessID + "accepted a connection with Peer: " + peerID);
-	}
-
-	public void startP2PCommunication() {
-		sendMessage(messageUtil.constructBitFieldMessage(peerProcess.bitField));
-		peerBitFieldArray = messageDataReader.fetchTCPBitfieldPayload(bufferedIn);
-
-		peerProcess.peerProcessLogger.info("Peer: "+ peerProcess.peerProcessID + "is Connected to the Peer: " + peerID);
-
-		if (messageDataReader.isPeerInterested(peerProcess.bitField, peerBitFieldArray)) {
-			sendMessage(messageUtil.constructInterestedMessage());
-		} else {
-			sendMessage(messageUtil.constructNotInterestedMessage());
-		}
-	}
-
-	public void createDirectory(String directory){
-		new File(directory).mkdir();
 	}
 
 	public void writeDataToFile() throws IOException {
-		String peerFolder =  String.valueOf(peerProcess.peerProcessID);
-
-		new File(peerFolder).mkdir();
-
-		String fileName = peerFolder + "/" + PeerTorrConfig.fileName;
-		File file = new File(fileName);
-
-		FileOutputStream fileOPStream = new FileOutputStream(file);
-		fileOPStream.write(peerProcess.resourcePayload);
-		fileOPStream.close();
+		String peerFilePath =  String.valueOf(peerProcess.peerProcessID);
+		new File(peerFilePath).mkdir();
+		File peerDataFile = new File(peerFilePath + "/" + PeerDataConfig.peerTransferFileName);
+		FileOutputStream fileDataStream = new FileOutputStream(peerDataFile);
+		fileDataStream.write(peerProcess.resourceDataPayload);
+		fileDataStream.close();
+		peerProcess.peerDataLogger.info("Peer " + peerProcess.peerProcessID + " has downloaded the complete file.");
 	}
 
-	public void publishAndBroadcastHaveMsg(byte[] pieceDataIndex) {
-		for (PeerClient ct : peerProcess.peerClients) {
-			ct.sendMessage(ct.messageUtil.constructHaveMessage(pieceDataIndex));
+	public void publishHaveMessageAcrossPeers(byte[] dataPieceIndex) {
+		for (PeerClient client : peerProcess.peerClients) {
+			client.transmitMessage(client.messageUtil.fetchAndConstructHaveMessage(dataPieceIndex));
 		}
 	}
 
-	public void checkAndPublishNotInterestedMessage() throws IOException {
-		sendMessage(messageUtil.constructNotInterestedMessage());
-		if (Arrays.equals(peerProcess.bitField, peerProcess.fullResource)) {
-			for (PeerClient ct : peerProcess.peerClients) {
-				ct.sendMessage(ct.messageUtil.constructNotInterestedMessage());
-			}
-			writeDataToFile();
-			peerProcess.peerProcessLogger.info("Peer " + peerProcess.peerProcessID + " has downloaded the complete file.");
+	public void fetchAndHandleHaveMessage() {
+
+		byte[] pieceIndexAsAnArray = messageReader.fetchAndReadMessagePayload(bufferedInputStream, 4);
+		int dataPieceAsInt = ByteIOUtil.byteArrayToInteger(pieceIndexAsAnArray);
+		peerProcess.peerDataLogger.info("Peer: " + peerProcess.peerProcessID + " received a Have message from Peer: " + peerID + " for the index:" + dataPieceAsInt);
+
+		bitFieldClient[dataPieceAsInt / 8] |= (1 << (7 - (dataPieceAsInt % 8)));
+		byte indexDataAsByte = peerProcess.bitFieldData[dataPieceAsInt / 8];
+
+		if(((1 << (7 - (dataPieceAsInt % 8))) & indexDataAsByte) == 0){
+			transmitMessage(messageUtil.fetchAndConstructInterestedMessage());
+		}else{
+			transmitMessage(messageUtil.fetchAndConstructNotInterestedMessage());
 		}
 	}
 
-	public void closePeerSocket() {
+	public void fetchAndHandleRequestMessage() {
+		byte[] requestMessageBytes = messageReader.fetchAndReadMessagePayload(bufferedInputStream, 4);
+		int pieceIndex = ByteIOUtil.byteArrayToInteger(requestMessageBytes);
+		peerProcess.peerDataLogger.info("Peer: " + peerProcess.peerProcessID + " received a REQUEST message from Peer: " + peerID + " for the pieceIndex: " + pieceIndex);
+		int beginningIndex = pieceIndex * PeerDataConfig.transferPieceSize;
+
 		try {
-			if (!requestSocket.isClosed()){
-				requestSocket.close();
+			byte[] requestMessageData;
+
+			if ((PeerDataConfig.peerTransferFileSize - beginningIndex) < PeerDataConfig.transferPieceSize) {
+				requestMessageData = Arrays.copyOfRange(peerProcess.resourceDataPayload, beginningIndex, PeerDataConfig.peerTransferFileSize);
+			}else {
+				requestMessageData = Arrays.copyOfRange(peerProcess.resourceDataPayload, beginningIndex, beginningIndex + PeerDataConfig.transferPieceSize);
 			}
-		} catch (IOException exception) {
-			exception.printStackTrace();
+
+			if (!isRemotePeerClientChoked) {
+				transmitMessage(messageUtil.fetchAndConstructPieceMessage(pieceIndex, requestMessageData));
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+			System.out.println(e.toString());
 		}
+
 	}
+
+
 }

@@ -1,6 +1,5 @@
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.net.*;
 import java.util.*;
@@ -13,284 +12,283 @@ import java.util.logging.Logger;
 public class peerProcess {
 
 	static List<PeerClient> peerClients = Collections.synchronizedList(new ArrayList<PeerClient>());
-	static PeerClient optUnchokedNeighbor;
-	static byte[] bitField, resourcePayload, fullResource;
-	static AtomicBoolean[] piecesReqsted;
-	static Logger peerProcessLogger;
+	static PeerClient optimallyUnchokedNeighbour;
+	static AtomicBoolean[] noOfPiecesRequested;
+	static Logger peerDataLogger;
+	static byte[] bitFieldData, resourceDataPayload, fullDataResource;
 
-	ScheduledExecutorService taskSchedlr = Executors.newScheduledThreadPool(3);
-
-	Integer port = 8000;
+	ScheduledExecutorService taskScheduleExecutor = Executors.newScheduledThreadPool(3);
 	static Integer peerProcessID;
-	static ServerSocket serverSocket;
+	static ServerSocket peerServerSocket;
+	Integer port = 8000;
 
-	public static void main(String[] args) throws Exception {
-
-		peerProcess peerProcessObj = new peerProcess();
-		peerProcessID = Integer.parseInt(args[0]);
-
-		PeerTorrConfig configObj = new PeerTorrConfig();
-		peerProcessLogger = ProcessLogger.getLogger(peerProcessID);
-
-		List<RemotePeerInfo> connectionEstablishedPeers = new ArrayList<RemotePeerInfo>();
-		List<RemotePeerInfo> yetToConnectPeers = new ArrayList<RemotePeerInfo>();
-
-		boolean isFileAvailable = false;
-		for (RemotePeerInfo rpi : PeerTorrConfig.peerInfoList) {
-			if (Integer.parseInt(rpi.peerId) < peerProcessID) {
-				connectionEstablishedPeers.add(rpi);
-			} else if (Integer.parseInt(rpi.peerId) == peerProcessID) {
-				peerProcessObj.port = Integer.parseInt(rpi.peerPort);
-				if (rpi.peerHasFile.equals("1"))
-					isFileAvailable = true;
-			} else {
-				yetToConnectPeers.add(rpi);
-			}
-		}
-		bitField = new byte[PeerTorrConfig.noOfBytes];
-		piecesReqsted = new AtomicBoolean[PeerTorrConfig.noOfPieces];
-		Arrays.fill(piecesReqsted, new AtomicBoolean(false));
-		resourcePayload = new byte[PeerTorrConfig.fileSz];
-		fullResource = new byte[PeerTorrConfig.noOfBytes];
-		intializeVariables(isFileAvailable, PeerTorrConfig.noOfPieces);
-		listenToConnectedPeers(connectionEstablishedPeers, configObj);
-		serverSocket = new ServerSocket(peerProcessObj.port);
-		peerProcessLogger.info("Socket Opened on port: " + peerProcessObj.port);
-		listenToFuturePeers(yetToConnectPeers, configObj);
-		selectOptimisticallyUnchokedNeighbour();
-		startTaskSchedulers(peerProcessObj);
-
-
-	}
-
-	public static void readResourceFile() throws IOException {
+	public static void readPeerDataFromFile() throws IOException {
 		try {
-			File resource = new File( peerProcess.peerProcessID + "/" + PeerTorrConfig.fileName);
-			FileInputStream filePayload = new FileInputStream(resource);
-			filePayload.read(resourcePayload);
-			filePayload.close();
-		} catch (FileNotFoundException ex) {
-			System.err.println("Exception occured while reading the File from Peer: "+peerProcess.peerProcessID+" .Message: "+ex.getMessage());
+			File dataResource = new File( peerProcess.peerProcessID + "/" + PeerDataConfig.peerTransferFileName);
+			FileInputStream dataObtainedFromResource = new FileInputStream(dataResource);
+			dataObtainedFromResource.read(resourceDataPayload);
+			dataObtainedFromResource.close();
+		} catch (Exception ex) {
+			System.err.println("Exception occurred while reading the File from Peer: "+peerProcess.peerProcessID+" .Message: "+ex.getMessage());
 			ex.printStackTrace();
 		}
 	}
 
-	public static void intializeVariables(boolean fileAvailable, int pieces) throws IOException {
-		Arrays.fill(fullResource, (byte) 255);
-		if (fileAvailable) {
-			readResourceFile();
-			Arrays.fill(bitField, (byte) 255);
-			if (pieces % 8 != 0) {
-				int end = (int) pieces % 8;
-				bitField[bitField.length - 1] = 0;
-				fullResource[bitField.length - 1] = 0;
-				while (end != 0) {
-					bitField[bitField.length - 1] |= (1 << (8 - end));
-					fullResource[bitField.length - 1] |= (1 << (8 - end));
-					end--;
+	public static void fetchAllInitialData(boolean isFileAvailable, int dataPiece) throws IOException {
+		Arrays.fill(fullDataResource, (byte) 255);
+		if (isFileAvailable) {
+			readPeerDataFromFile();
+			Arrays.fill(bitFieldData, (byte) 255);
+			if (dataPiece % 8 != 0) {
+				int finalIndex = (int) dataPiece % 8;
+				bitFieldData[bitFieldData.length - 1] = 0;
+				fullDataResource[bitFieldData.length - 1] = 0;
+				while (finalIndex != 0) {
+					bitFieldData[bitFieldData.length - 1] |= (1 << (8 - finalIndex));
+					fullDataResource[bitFieldData.length - 1] |= (1 << (8 - finalIndex));
+					finalIndex--;
 				}
 			}
 		} else {
-			if (pieces % 8 != 0) {
-				int end = (int) pieces % 8;
-				fullResource[bitField.length - 1] = 0;
-				while (end != 0) {
-					fullResource[bitField.length - 1] |= (1 << (8 - end));
-					end--;
+			if (dataPiece % 8 != 0) {
+				int finalIndex = (int) dataPiece % 8;
+				fullDataResource[bitFieldData.length - 1] = 0;
+				while (finalIndex != 0) {
+					fullDataResource[bitFieldData.length - 1] |= (1 << (8 - finalIndex));
+					finalIndex--;
 				}
 			}
 		}
 	}
 
-	public static void listenToConnectedPeers(List<RemotePeerInfo> connectionEstablishedPeers, PeerTorrConfig configObj) {
+	public static void pollAndStartOptimisticallyUnchokedNeighbour() {
+		List<PeerClient> chokedNeighbours = new ArrayList<PeerClient>();
 
-		for (RemotePeerInfo pInfo : connectionEstablishedPeers) {
+		for (PeerClient client : peerClients) {
+			if (client.isRemotePeerClientInterested && client.isRemotePeerClientChoked) {
+				chokedNeighbours.add(client);
+			}
+		}
+
+		if (chokedNeighbours.isEmpty()) {
+			optimallyUnchokedNeighbour = null;
+		} else {
+			optimallyUnchokedNeighbour = chokedNeighbours.get(new Random().nextInt(chokedNeighbours.size()));
+		}
+	}
+
+	public static void listenToDataPeers(List<RemotePeer> peersConnected, PeerDataConfig peerDataConfig) {
+
+		for (RemotePeer remotePeer : peersConnected) {
 			try {
-				PeerClient client = new PeerClient(new Socket(pInfo.peerAddress, Integer.parseInt(pInfo.peerPort)),
-						true, pInfo.peerId, configObj);
-
+				PeerClient client = new PeerClient(new Socket(remotePeer.peerAddress, Integer.parseInt(remotePeer.peerPort)), true, remotePeer.peerId, peerDataConfig);
 				client.start();
 				peerClients.add(client);
-				peerProcessLogger.info("Peer " + peerProcessID + " makes a connection to Peer " + pInfo.peerId + ".");
+
+				peerDataLogger.info("Peer " + peerProcessID + " Initiated/Connected to Peer " + remotePeer.peerId + ".");
 			} catch (Exception ex) {
 				ex.printStackTrace();
-				peerProcessLogger.info(ex.toString());
 			}
 
 		}
 
 	}
 
-	public static void selectOptimisticallyUnchokedNeighbour() {
-		List<PeerClient> interestedAndChokedNeighbour = new ArrayList<PeerClient>();
+	public void startOptimisticallyPreferredScheduler(int neighbourCount) {
 
-		for (PeerClient peerClient : peerClients) {
-			if (peerClient.isClientInterested && peerClient.isClientChoked) {
-				interestedAndChokedNeighbour.add(peerClient);
-			}
-		}
-
-		if (interestedAndChokedNeighbour.isEmpty()) {
-			optUnchokedNeighbor = null;
-		} else {
-			optUnchokedNeighbor = interestedAndChokedNeighbour
-					.get(new Random().nextInt(interestedAndChokedNeighbour.size()));
-		}
-	}
-
-	public static void listenToFuturePeers(List<RemotePeerInfo> yetToConnectPeers, PeerTorrConfig configObj) {
-		try {
-			for (RemotePeerInfo remotePeerInfoObj : yetToConnectPeers) {
-				Runnable peerConn = () -> {
-					try {
-						PeerClient futurePeer = new PeerClient(serverSocket.accept(), false, remotePeerInfoObj.peerId,
-								configObj);
-						peerProcessLogger.info(
-								"Future Peer " + peerProcessID + " is connected from Peer " + remotePeerInfoObj.peerId + ".");
-						peerClients.add(futurePeer);
-						futurePeer.start();
-					} catch (IOException e) {
-						peerProcessLogger.info(e.getMessage());
-					}
-				};
-				new Thread(peerConn).start();
-			}
-		} catch (Exception ex) {
-			peerProcessLogger.info("Exception while listening to future peers :" + ex.getMessage());
-			//ex.printStackTrace();
-		}
+		Runnable optimisticallyPreferredNeighbour = () -> {
+			relistOptimisticNeighbours();
+		};
+		taskScheduleExecutor.scheduleAtFixedRate(optimisticallyPreferredNeighbour, neighbourCount, neighbourCount, TimeUnit.SECONDS);
 	}
 
 	public void startPrefferreNeighbourScheduler(int k, int p) {
 		Runnable findPreferredNeibhbours = () -> {
 			refreshPreferredNeighbours(k);
 		};
-		taskSchedlr.scheduleAtFixedRate(findPreferredNeibhbours, p, p, TimeUnit.SECONDS);
+		taskScheduleExecutor.scheduleAtFixedRate(findPreferredNeibhbours, p, p, TimeUnit.SECONDS);
 	}
 
 	public void refreshPreferredNeighbours(int noOfPreferreNeighbours) {
 		try {
-			Collections.sort(peerClients, (ct1, ct2) -> ct2.dataDownloadRate.compareTo(ct1.dataDownloadRate));
-			int counter = 0;
-			List<String> prefferredList = new ArrayList<String>();
+			Collections.sort(peerClients, (clientA, clientB) -> clientB.downloadSpeed.compareTo(clientA.downloadSpeed));
+			int neighoutCount = 0;
+			List<String> preferredNeighbours = new ArrayList<String>();
 
 			for (PeerClient client : peerClients) {
-				if (client.isClientInterested) {
-					if (counter < noOfPreferreNeighbours) {
-						if (client.isClientChoked) {
-							client.isClientChoked = false;
-							client.sendMessage(client.messageUtil.constructUnChokeMessage());
+				if (client.isRemotePeerClientInterested) {
+					if (neighoutCount < noOfPreferreNeighbours) {
+						if (client.isRemotePeerClientChoked) {
+							client.isRemotePeerClientChoked = false;
+							client.transmitMessage(client.messageUtil.fetchAndConstructUnChokeMessage());
 						}
-						prefferredList.add(client.peerID);
+						preferredNeighbours.add(client.peerID);
 					} else {
 
-						if (!client.isClientChoked && client != optUnchokedNeighbor) {
-							client.isClientChoked = true;
-							client.sendMessage(client.messageUtil.constructChokeMessage());
+						if (!client.isRemotePeerClientChoked && client != optimallyUnchokedNeighbour) {
+							client.isRemotePeerClientChoked = true;
+							client.transmitMessage(client.messageUtil.fetchAndConstructChokeMessage());
 						}
 					}
 
-					counter++;
+					neighoutCount++;
 				}
 			}
-			peerProcessLogger.info("Peer " + peerProcessID + " with preferred neighbours:" + prefferredList);
+			peerDataLogger.info("Peer " + peerProcessID + " has picked it's preferred neighbours:" + preferredNeighbours);
 		} catch (Exception e) {
-			peerProcessLogger.info(e.toString());
+			System.err.println("Error while pickin Neighbours: "+e.getMessage());
 		}
 	}
 
-	public void startOptimisticallyPreferreScheduler(int m) {
 
-		Runnable findOptimisticallyPreferreNeighbour = () -> {
-			refreshOptimisticallyPreferredNeighmour();
-		};
-		taskSchedlr.scheduleAtFixedRate(findOptimisticallyPreferreNeighbour, m, m, TimeUnit.SECONDS);
-	}
 
-	public void refreshOptimisticallyPreferredNeighmour() {
+	public void relistOptimisticNeighbours() {
 		try {
 
-			List<PeerClient> interestedAndChokedNeighbour = new ArrayList<PeerClient>();
+			List<PeerClient> interestedChokedneighbouringPeers = new ArrayList<PeerClient>();
 
-			for (PeerClient peerClient : peerClients) {
-				if (peerClient.isClientInterested && peerClient.isClientChoked) {
-					interestedAndChokedNeighbour.add(peerClient);
+			for (PeerClient client : peerClients) {
+				if (client.isRemotePeerClientInterested && client.isRemotePeerClientChoked) {
+					interestedChokedneighbouringPeers.add(client);
 				}
 			}
 
-			if (!interestedAndChokedNeighbour.isEmpty()) {
-				if (optUnchokedNeighbor != null) {
-					optUnchokedNeighbor.isClientChoked = true;
-					optUnchokedNeighbor.sendMessage(optUnchokedNeighbor.messageUtil.constructChokeMessage());
+			if (!interestedChokedneighbouringPeers.isEmpty()) {
+				if (optimallyUnchokedNeighbour != null) {
+					optimallyUnchokedNeighbour.isRemotePeerClientChoked = true;
+					optimallyUnchokedNeighbour.transmitMessage(optimallyUnchokedNeighbour.messageUtil.fetchAndConstructChokeMessage());
 				}
-				optUnchokedNeighbor = interestedAndChokedNeighbour
-						.get(new Random().nextInt(interestedAndChokedNeighbour.size()));
-				optUnchokedNeighbor.isClientChoked = false;
-				optUnchokedNeighbor.sendMessage(optUnchokedNeighbor.messageUtil.constructUnChokeMessage());
+				optimallyUnchokedNeighbour = interestedChokedneighbouringPeers.get(new Random().nextInt(interestedChokedneighbouringPeers.size()));
+
+				optimallyUnchokedNeighbour.isRemotePeerClientChoked = false;
+				optimallyUnchokedNeighbour.transmitMessage(optimallyUnchokedNeighbour.messageUtil.fetchAndConstructUnChokeMessage());
 
 			} else {
-				if (optUnchokedNeighbor != null) {
-					if (!optUnchokedNeighbor.isClientChoked) {
-						optUnchokedNeighbor.isClientChoked = true;
-						optUnchokedNeighbor.sendMessage(optUnchokedNeighbor.messageUtil.constructChokeMessage());
+				if (optimallyUnchokedNeighbour != null) {
+					if (!optimallyUnchokedNeighbour.isRemotePeerClientChoked) {
+						optimallyUnchokedNeighbour.isRemotePeerClientChoked = true;
+						optimallyUnchokedNeighbour.transmitMessage(optimallyUnchokedNeighbour.messageUtil.fetchAndConstructChokeMessage());
 					}
-					optUnchokedNeighbor = null;
+					optimallyUnchokedNeighbour = null;
 				}
 			}
 
-			if (optUnchokedNeighbor != null)
-				peerProcessLogger.info("Peer: " + peerProcessID + " has the optimistically unchoked neighbor Peer: "
-						+ optUnchokedNeighbor.peerID);
+			if (optimallyUnchokedNeighbour != null)
+				peerDataLogger.info("Peer: " + peerProcessID + " has the optimistically unchoked neighbor Peer: "
+						+ optimallyUnchokedNeighbour.peerID);
 		} catch (Exception e) {
 			e.printStackTrace();
 			System.out.println(e.toString());
 		}
 	}
 
-	public void checkForCompleteFile() {
-		Runnable pollForPeerFile = () -> {
-			checkAndCloseSocket(hasAllClientsReceived());
-		};
-		taskSchedlr.scheduleAtFixedRate(pollForPeerFile, 10, 5, TimeUnit.SECONDS);
-	}
-
-	public boolean hasAllClientsReceived() {
-		boolean isFileReceived = true;
-		for (PeerClient ct : peerClients) {
-			if (!Arrays.equals(ct.peerBitFieldArray, fullResource)) {
-				peerProcessLogger.info("Peer " + ct.peerID + " yet to receive the full file.");
-				isFileReceived = false;
-				break;
+	public void validateAndCloseSocket(boolean isTrasferred) {
+		peerDataLogger.info("Is File Transferred: " + isTrasferred);
+		if (isTrasferred && Arrays.equals(bitFieldData, fullDataResource)) {
+			for (PeerClient client : peerClients) {
+				client.validateStoppingCondition(true);
 			}
-		}
-		return isFileReceived;
-	}
-
-	public void checkAndCloseSocket(boolean isTrasferred) {
-		peerProcessLogger.info("Complete File Status: " + isTrasferred);
-		if (isTrasferred && Arrays.equals(bitField, fullResource)) {
-			for (PeerClient ct : peerClients) {
-				ct.setConditionForStopping(true);
-			}
-			taskSchedlr.shutdown();
+			taskScheduleExecutor.shutdown();
 
 			try {
-				if (!serverSocket.isClosed())
-					serverSocket.close();
+				if (!peerServerSocket.isClosed())
+					peerServerSocket.close();
 			} catch (IOException e) {
 				e.printStackTrace();
-				peerProcessLogger.info("Exception During socket closing");
+				peerDataLogger.info("Socket Didnot Close Properly");
 			} finally {
-				peerProcessLogger.info("ShuttingDown the PeerProcess with Id: " + peerProcessID);
+				peerDataLogger.info("ShuttingDown the PeerProcess with Id: " + peerProcessID);
 				System.exit(0);
 			}
 		}
 	}
 
-	public static void startTaskSchedulers(peerProcess peerProc) {
-		peerProc.startPrefferreNeighbourScheduler(PeerTorrConfig.noOfPrefPeers, PeerTorrConfig.prefPeersUnchokingTime);
-		peerProc.startOptimisticallyPreferreScheduler(PeerTorrConfig.optUnchokingTime);
-		peerProc.checkForCompleteFile();
+	public static void listenForProspectivePeers(List<RemotePeer> futurePeers, PeerDataConfig peerDataConfig) {
+		try {
+			for (RemotePeer remotePeer : futurePeers) {
+				Runnable connectionToPeers = () -> {
+					try {
+						PeerClient futurePeer = new PeerClient(peerServerSocket.accept(), false, remotePeer.peerId, peerDataConfig);
+						peerDataLogger.info("Peer " + peerProcessID + " is now Connected to " + remotePeer.peerId + ".");
+						peerClients.add(futurePeer);
+						futurePeer.start();
+					} catch (IOException e) {
+						peerDataLogger.info(e.getMessage());
+					}
+				};
+				new Thread(connectionToPeers).start();
+			}
+		} catch (Exception ex) {
+			peerDataLogger.info("Exception while listening to Prospective peers :" + ex.getMessage());
+		}
+	}
+
+	public void checkFileIfComplete() {
+		Runnable pollForPeerFile = () -> {
+			validateAndCloseSocket(isFileWithAllPeers());
+		};
+		taskScheduleExecutor.scheduleAtFixedRate(pollForPeerFile, 10, 5, TimeUnit.SECONDS);
+	}
+
+	public boolean isFileWithAllPeers() {
+		boolean isFileWithAllPeers = true;
+		for (PeerClient client : peerClients) {
+			if (!Arrays.equals(client.bitFieldClient, fullDataResource)) {
+				peerDataLogger.info("Peer " + client.peerID + " didnot receive receive the full file.");
+				isFileWithAllPeers = false;
+				break;
+			}
+		}
+		return isFileWithAllPeers;
+	}
+
+	public static void startTaskSchedulers(peerProcess peerProcessScheduler) {
+		peerProcessScheduler.startPrefferreNeighbourScheduler(PeerDataConfig.peerCount, PeerDataConfig.preferredUnchokingTime);
+		peerProcessScheduler.startOptimisticallyPreferredScheduler(PeerDataConfig.optimisticUnchokingInterval);
+		peerProcessScheduler.checkFileIfComplete();
+	}
+
+	public static void main(String[] args) throws Exception {
+		peerProcessID = Integer.parseInt(args[0]);
+		peerDataLogger = ProcessLogger.fetchPeerDataLogger(peerProcessID);
+
+		peerProcess peerProcessInstantiator = new peerProcess();
+		PeerDataConfig peerDataConfig = new PeerDataConfig();
+
+		List<RemotePeer> connectedPeers = new ArrayList<RemotePeer>();
+		List<RemotePeer> peersYetToConnect = new ArrayList<RemotePeer>();
+
+		boolean isFileAvailable = false;
+		for (RemotePeer remotePeer : PeerDataConfig.peerList) {
+			if (Integer.parseInt(remotePeer.peerId) < peerProcessID) {
+				connectedPeers.add(remotePeer);
+			} else if (Integer.parseInt(remotePeer.peerId) == peerProcessID) {
+				peerProcessInstantiator.port = Integer.parseInt(remotePeer.peerPort);
+				if (remotePeer.peerHasFile.equals("1"))
+					isFileAvailable = true;
+			} else {
+				peersYetToConnect.add(remotePeer);
+			}
+		}
+
+		bitFieldData = new byte[PeerDataConfig.byteCount];
+		noOfPiecesRequested = new AtomicBoolean[PeerDataConfig.pieceCount];
+		Arrays.fill(noOfPiecesRequested, new AtomicBoolean(false));
+
+		fullDataResource = new byte[PeerDataConfig.byteCount];
+		resourceDataPayload = new byte[PeerDataConfig.peerTransferFileSize];
+
+		fetchAllInitialData(isFileAvailable, PeerDataConfig.pieceCount);
+
+		listenToDataPeers(connectedPeers, peerDataConfig);
+
+		peerServerSocket = new ServerSocket(peerProcessInstantiator.port);
+
+		peerDataLogger.info("Socket Opened on port: " + peerProcessInstantiator.port);
+
+		listenForProspectivePeers(peersYetToConnect, peerDataConfig);
+		pollAndStartOptimisticallyUnchokedNeighbour();
+		startTaskSchedulers(peerProcessInstantiator);
 	}
 
 }
