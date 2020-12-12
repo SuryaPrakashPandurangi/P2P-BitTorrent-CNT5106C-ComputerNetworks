@@ -4,7 +4,7 @@ import java.io.IOException;
 import java.util.List;
 import java.util.StringTokenizer;
 
-public class IOUtil {
+public class ConfigDataUtil {
 
 	private static BufferedReader configBufferReader;
 

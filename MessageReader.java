@@ -8,109 +8,120 @@ import java.util.Random;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 
-public class MessageReader 
-{
+public class MessageReader{
 
-	public synchronized byte[] readTCPBitfieldPayload(InputStream inputStream) {
-		byte[] clientBitField = new byte[0];
+	public synchronized byte[] fetchTCPBitfieldPayload(InputStream inputDataStream) {
+		byte[] clientTCPBitField = new byte[0];
 		try {
-			byte[] messageLength = new byte[4];
-			inputStream.read(messageLength);
-			clientBitField = readBitfieldPayload(inputStream, ByteArrayUtil.convertByteArrayToInteger(messageLength) - 1);
-		} catch (IOException ioe) {
-			ioe.printStackTrace();
+			int byteIndex = 4;
+			byte[] messageDataLen = new byte[4];
+			inputDataStream.read(messageDataLen);
+			clientTCPBitField = readAndFetchBitfieldPayload(inputDataStream, ByteArrayUtil.convertByteArrayToInteger(messageDataLen) - 1);
+		} catch (IOException ioException) {
+			System.err.println("Exception Occured while Fetching Bitfield Payload: "+ioException.getMessage());
+			ioException.printStackTrace();
 		}
-		return clientBitField;
+		return clientTCPBitField;
 	}
 	
 
-	public int indexOfPieceToReq(byte[] peerProcessBitfield, byte[] peerClientBitField,
-			AtomicBoolean[] neededBitfield) {
-		byte[] need = new byte[peerProcessBitfield.length];
-		byte[] temp = new byte[peerProcessBitfield.length];
-		Arrays.fill(temp, (byte)0);
-		byte[] reqBitFieldByte = ByteArrayUtil.mergeBooleanArraytoByteArray(neededBitfield, temp);
-		byte[] available = new byte[peerProcessBitfield.length];
-		List<Integer> list = new ArrayList<Integer>();
-		int i = 0;
-		while (i < peerProcessBitfield.length) {
-			available[i] = (byte) (peerProcessBitfield[i] & reqBitFieldByte[i]);
-			need[i] = (byte) ((available[i] ^ peerClientBitField[i]) & ~available[i]);
+	public int fetchIndexOfPiece(byte[] processBitfield, byte[] clientBitField, AtomicBoolean[] bitFieldNeeded) {
+		byte[] dataNeeded = new byte[processBitfield.length];
+		byte[] tempForMerge = new byte[processBitfield.length];
+		int fillVal = 0;
 
-			if (need[i] != 0)
-				list.add(i);
+		Arrays.fill(tempForMerge, (byte)0);
+
+		byte[] requestBitFieldAsBytes = ByteArrayUtil.mergeBooleanArraytoByteArray(bitFieldNeeded, tempForMerge);
+		byte[] availableBytes = new byte[processBitfield.length];
+		List<Integer> listOfAvailableBytes = new ArrayList<Integer>();
+		int i = 0;
+
+		while (i < processBitfield.length) {
+			availableBytes[i] = (byte) (processBitfield[i] & requestBitFieldAsBytes[i]);
+			dataNeeded[i] = (byte) ((availableBytes[i] ^ clientBitField[i]) & ~availableBytes[i]);
+
+			if (dataNeeded[i] != 0){
+				listOfAvailableBytes.add(i);
+			}
+
 			i++;
 		}
-		return getPieceIndex(list, need);
+		return fetchPieceIndex(listOfAvailableBytes, dataNeeded);
 	}
 		
-	public byte[] readMessagePayload(InputStream ins, int payloadLength) {
-		byte[] result = new byte[0];
-		int lengthTobeRead = payloadLength;
+	public byte[] readAndfetchMessagePayload(InputStream ins, int payloadLength) {
+		byte[] payloadMessage = new byte[0];
+		int lengthOfthePayload = payloadLength;
 		try {
-			while (lengthTobeRead != 0) {
-				int bytesAvailable = ins.available();
-				int read = 0;
-				if (payloadLength > bytesAvailable) {
-					read = bytesAvailable;
-				} else {
-					read = payloadLength;
+			while (lengthOfthePayload != 0) {
+				int availableBytesFromStream = ins.available();
+				int readData = 0;
+				if (payloadLength > availableBytesFromStream) {
+					readData = availableBytesFromStream;
+				}else{
+					readData = payloadLength;
 				}
 
-				byte[] r = new byte[read];
-				if (read != 0) {
-					ins.read(r);
-					result = ByteArrayUtil.mergeTwoByteArrays(result, r);
-					lengthTobeRead = lengthTobeRead - read;
+				byte[] dataToInsert = new byte[readData];
+				if (readData != 0) {
+					ins.read(dataToInsert);
+					payloadMessage = ByteArrayUtil.mergeTwoByteArrays(payloadMessage, dataToInsert);
+					lengthOfthePayload = lengthOfthePayload - readData;
 				}
 			}
-		} catch (IOException ioe) {
-			ioe.printStackTrace();
+		} catch (IOException io) {
+			io.printStackTrace();
 		}
-		return result;
+		return payloadMessage;
 	}
 	
-	public String readTCPHSMessage(InputStream in) {
+	public String fetchTCPHasMessage(InputStream inputStream) {
 		try {
-			isValidHandshakeHeader(in);
-			in.read(new byte[10]);
+			isHandShakeHeaderValid(inputStream);
+			inputStream.read(new byte[10]);
 			byte[] peerId = new byte[4];
-			in.read(peerId);
+			inputStream.read(peerId);
 			return new String(peerId);
 		}
 		catch (IOException ioe) {
 			ioe.printStackTrace();
 		}
+		String empty = "";
 		return "";
 	}
 	
-	public void isValidHandshakeHeader(InputStream inputStrem) throws IOException {
+	public void isHandShakeHeaderValid(InputStream inputStrem) throws IOException {
 		byte[] inputHeader = new byte[18];
 		inputStrem.read(inputHeader);
-		if (!(new String(inputHeader).equals("P2PFILESHARINGPROJ")))
+
+		if (!("P2PFILESHARINGPROJ".equals(new String(inputHeader)))){
 			throw new RuntimeException("Header Mismatch");
+		}
 	}
 
-	public boolean shouldSendIntrMessage(byte[] peerProcessBitField, byte[] peerClientBitField) {
-		byte isByteSet;
-		int startInd = 0;
-		while (startInd < peerProcessBitField.length) {
-			isByteSet = (byte) (~peerProcessBitField[startInd] & peerClientBitField[startInd]);
-			if (isByteSet != 0) {
+	public boolean isPeerInterested(byte[] peerProcessBitField, byte[] peerClientBitField) {
+		byte peerInterestInBytes;
+		int startingIndex = 0;
+
+		while (startingIndex < peerProcessBitField.length) {
+			peerInterestInBytes = (byte) (~peerProcessBitField[startingIndex] & peerClientBitField[startingIndex]);
+
+			if (peerInterestInBytes != 0) {
 				return true;
 			}
-			startInd++;
+			startingIndex++;
 		}
+
 		return false;
 	}
 	
-	public int getRandomInteger(int high) {
-		
+	public int generateRandomInteger(int high) {
 		return new Random().nextInt(high);
 	}
 	
-	public int getrandonSetBit(byte msg) {
-		int bitInd = getRandomInteger(8);
+	public int generateRandomSet(byte msg) {
+		int bitInd = generateRandomInteger(8);
 		int i = 0;
 		while (i < 8) {
 			if ((msg & (1 << i)) != 0) {
@@ -122,26 +133,31 @@ public class MessageReader
 		return bitInd;
 	}
 	
-	public int getPieceIndex(List<Integer> list, byte[] need) {
-		if(list.isEmpty())
+	public int fetchPieceIndex(List<Integer> listToFetchFrom, byte[] byteArrayNeeded) {
+		if(listToFetchFrom.isEmpty()){
 			return -1;
-		int byteInd = list.get(getRandomInteger(list.size()));
-		byte rand = need[byteInd];
-		int bitInd = getrandonSetBit(rand);				
-		return (byteInd*8) + (7-bitInd);	
+		}
+
+		int indexOfByte = listToFetchFrom.get(generateRandomInteger(listToFetchFrom.size()));
+		byte byteFromArray = byteArrayNeeded[indexOfByte];
+		int bitIndexAsInt = generateRandomSet(byteFromArray);
+
+		return (indexOfByte*8) + (7-bitIndexAsInt);
 	}
 	
-	public byte[] readBitfieldPayload(InputStream ins,int length) throws IOException {
-		
-		byte[] clientBitField = new byte[length];
-		byte[] type = new byte[1];			
-		ins.read(type);
-		byte val = ByteArrayUtil.convertIntegerToByteArray(MessageTypes.bitfield.ordinal())[3];
-		if(type[0] == val) 
-		{				
-			ins.read(clientBitField);				
+	public byte[] readAndFetchBitfieldPayload(InputStream inputStream, int length) throws IOException {
+		byte[] clientBitFieldPayload = new byte[length];
+		byte[] streamType = new byte[1];
+
+		inputStream.read(streamType);
+
+		byte convertedArray = ByteArrayUtil.convertIntegerToByteArray(PeerCommunicationMessageType.BITFIELD.ordinal())[3];
+
+		if(streamType[0] == convertedArray){
+			inputStream.read(clientBitFieldPayload);
 		}
-		return clientBitField;
+
+		return clientBitFieldPayload;
 	}
 
 }

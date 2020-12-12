@@ -1,10 +1,10 @@
 
 public class ActualMessage {
 	int exchangeMessagelength;//Is 4 Bytes long
-	MessageTypes messageType;	//This is 1Byte long
+	PeerCommunicationMessageType messageType;	//This is 1Byte long
 	byte[] messagePayload;	//The Length is not fixed to a Value
 	
-	public ActualMessage(MessageTypes messageType, byte[] payLoad) {
+	public ActualMessage(PeerCommunicationMessageType messageType, byte[] payLoad) {
 		this.exchangeMessagelength = payLoad.length;
 		this.messageType = messageType;
 		this.messagePayload = payLoad;
@@ -18,11 +18,11 @@ public class ActualMessage {
 		this.exchangeMessagelength = exchangeMessagelength;
 	}
 
-	public MessageTypes getMessageType() {
+	public PeerCommunicationMessageType getMessageType() {
 		return messageType;
 	}
 
-	public void setMessageType(MessageTypes messageType) {
+	public void setMessageType(PeerCommunicationMessageType messageType) {
 		this.messageType = messageType;
 	}
 

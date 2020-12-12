@@ -16,8 +16,8 @@ public class PeerTorrConfig {
 
 	public PeerTorrConfig() throws IOException {
 		peerInfoList = new ArrayList<RemotePeerInfo>();
-		IOUtil.fetchCommonConfigData();
-		IOUtil.fetchPeerInfoConfigData(peerInfoList);
+		ConfigDataUtil.fetchCommonConfigData();
+		ConfigDataUtil.fetchPeerInfoConfigData(peerInfoList);
 		noOfPieces = (fileSz % PieceSize == 0) ? fileSz / PieceSize : (fileSz / PieceSize) + 1;
 		noOfBytes = (noOfPieces % 8 == 0) ? noOfPieces / 8 : (noOfPieces / 8) + 1;
 	}

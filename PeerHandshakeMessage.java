@@ -38,11 +38,9 @@ public class PeerHandshakeMessage {
 		this.zeroBits = zeroBits;
 	}
 	
-	public byte[] constructHandshakeMessage() 
-	{	
-		byte[] header_and_zerobits = ByteArrayUtil.mergeTwoByteArrays(getHandshakeHeader().getBytes(), getZeroBits());
-		byte[] handshakeMsg = ByteArrayUtil.mergeTwoByteArrays(header_and_zerobits, getPeerID().getBytes());
-		return handshakeMsg;
-		
+	public byte[] constructHandshakeMessage(){
+		byte[] paddedHeader = ByteArrayUtil.mergeTwoByteArrays(getHandshakeHeader().getBytes(), getZeroBits());
+		byte[] peerhandshakeMessage = ByteArrayUtil.mergeTwoByteArrays(paddedHeader, getPeerID().getBytes());
+		return peerhandshakeMessage;
 	}
 }
